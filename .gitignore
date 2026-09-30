@@ -1,0 +1,32 @@
+# --- Data & large files (not versioned) ---
+*.vcf.gz
+*.vcf.gz.tbi
+*.rds
+*.rda
+*.RData
+*.bed
+*.bim
+*.fam
+*.tgz
+*.zip
+*.csv
+*.tsv
+*.txt
+
+# --- R ---
+.Rhistory
+.RData
+.Ruserdata
+.Rproj.user/
+
+# --- Results & data directories ---
+results/
+nhanes/
+ref/
+data/
+output/
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+desktop.ini

@@ -1,0 +1,125 @@
+# Dietary inflammatory potential, C-reactive protein, and depression
+
+Analysis code for the manuscript:
+
+> **Dietary inflammatory potential, C-reactive protein, and depression: triangulation of NHANES observational mediation and Mendelian randomization**
+> *Psychiatry Research*, manuscript PSY-D-26-02386
+
+This repository contains the code used to reproduce all analyses reported in the revised manuscript. The study combines (i) cross-sectional mediation analyses of the Dietary Inflammatory Index (DII), high-sensitivity C-reactive protein (hs-CRP), and depressive symptoms in NHANES, and (ii) two-sample Mendelian randomization (MR) analyses of CRP, MDD, and related exposures.
+
+---
+
+## Repository structure
+
+```
+.
+├── env/                      # Environment setup
+│   ├── env_setup.sh          # One-shot install (system deps + R + Python)
+│   └── setup_R_packages.R    # Robust R-package installer (multi-mirror)
+├── data_download/            # Reference panel & GWAS summary statistics
+│   ├── download_ref_panel.sh # plink2 binary + 1000 Genomes EUR panel
+│   ├── download_gwas_vcf.sh  # Download GWAS VCFs from OpenGWAS/MRCIEU
+│   └── download_gwas_vcf.R   # R variant of the VCF downloader
+├── nhanes_mediation/         # NHANES mediation (observational arm)
+│   ├── nhanes_prep.R                # Download + build the 5-cycle analytic sample
+│   ├── fix_dii_rebuild.R            # Recompute DII (correct NA handling) → v2 sample
+│   ├── mediation_main.R             # Main mediation (glmnet ridge, survey-weighted)
+│   ├── mediation_lavaan_wlsmv.R     # lavaan WLSMV (probit) reproducibility check
+│   ├── mediation_delta_ci.R         # Delta-method 95% CIs (sandwich vcov)
+│   └── mediation_sensitivity_continuous.R  # Continuous / total-PHQ-9 / PHQ-9≥10
+└── mr_analysis/              # Two-sample MR (genetic arm)
+    ├── mr_main.R                    # Forward CRP→MDD and reverse MDD→CRP
+    ├── mr_il6r_drug_target.R        # IL6R cis drug-target MR
+    ├── mr_two_step_mediation.R      # Two-step MR (nutrient → CRP → MDD)
+    └── mr_report_table.R            # Full STROBE-MR reporting battery (R1-9)
+```
+
+---
+
+## Data sources
+
+All data are publicly available and are **not** stored in this repository.
+
+| Data | Source | Identifier |
+|---|---|---|
+| NHANES (2005–2018) | [NHANES](https://wwwn.cdc.gov/nchs/nhanes/) via the `nhanesA` R package | 5 cycles with hs-CRP: 2005-2006, 2007-2008, 2009-2010, 2015-2016, 2017-2018 |
+| CRP GWAS | [OpenGWAS](https://gwas.mrcieu.ac.uk/) | `ieu-b-35` (Ligthart et al. 2018) |
+| MDD GWAS | OpenGWAS | `ieu-b-102` (PGC MDD, Howard et al. 2019) |
+| Vitamin D GWAS | OpenGWAS | `ieu-b-4812` |
+| Fibre intake GWAS | OpenGWAS | `ukb-b-19085` |
+| LD reference | [MRCIEU](https://mrcieu.mrc.ac.uk/) | 1000 Genomes Phase 3, EUR |
+
+Analytic sample (observational arm): **N = 24,019** across the five hs-CRP cycles.
+
+---
+
+## Software requirements
+
+- **R ≥ 4.3** with packages: `nhanesA`, `survey`, `glmnet`, `lavaan`, `MendelianRandomization`, `data.table`, `dplyr`, `tidyr` (installed by `env/setup_R_packages.R`)
+- **plink2** (2.0) for LD clumping
+- **tabix** for VCF access
+- Linux environment (the scripts assume paths under `/root/autodl-tmp/`; adjust `OUT`/`VCFDIR`/`REF` variables at the top of each script if running elsewhere)
+
+---
+
+## Reproduction workflow
+
+**Step 0 — environment**
+
+```bash
+bash env/env_setup.sh
+```
+
+**Step 1 — reference panel & GWAS data**
+
+```bash
+bash data_download/download_ref_panel.sh   # plink2 + 1000G EUR panel
+bash data_download/download_gwas_vcf.sh    # CRP, MDD, VitD, fibre GWAS VCFs
+```
+
+**Step 2 — NHANES mediation (observational arm)**
+
+```bash
+Rscript nhanes_mediation/nhanes_prep.R                 # build analytic sample
+Rscript nhanes_mediation/fix_dii_rebuild.R             # correct DII → v2 sample
+Rscript nhanes_mediation/mediation_main.R              # main results
+Rscript nhanes_mediation/mediation_lavaan_wlsmv.R      # lavaan reproducibility
+Rscript nhanes_mediation/mediation_delta_ci.R          # 95% CIs
+Rscript nhanes_mediation/mediation_sensitivity_continuous.R  # sensitivity
+```
+
+**Step 3 — two-sample MR (genetic arm)**
+
+```bash
+Rscript mr_analysis/mr_main.R                 # forward + reverse MR
+Rscript mr_analysis/mr_il6r_drug_target.R     # IL6R drug-target MR
+Rscript mr_analysis/mr_two_step_mediation.R   # two-step MR
+Rscript mr_analysis/mr_report_table.R         # full STROBE-MR reporting table
+```
+
+---
+
+## Key results reproduced by this code
+
+**Observational mediation (DII → hs-CRP → depressive symptom dimensions)**
+
+| Model | Indirect proportion |
+|---|---|
+| Somatic, without BMI | 14.1% |
+| Somatic, with BMI | 6.5% |
+| Cognitive, without BMI | 11.6% |
+| Cognitive, with BMI | 6.2% |
+
+**Two-sample MR**
+
+| Analysis | Instruments (clump before → after) | Mean F | MR-Egger intercept (p) | Cochran Q (p) | Steiger direction (p) |
+|---|---|---|---|---|---|
+| CRP → MDD | 3,951 → 54 | 180.4 | 0.0008 (0.538) | 86.8 (0.0024) | correct (0.666) |
+| MDD → CRP | 4,613 → 23 | 41.5 | −0.0078 (0.179) | 42.0 (0.0062) | correct (0.021) |
+| IL6R → MDD | 117 → 2 | — (2 IVs) | — | — | — |
+
+---
+
+## License
+
+Code is released under the MIT License. Data are governed by their respective original licences (NHANES and OpenGWAS).
