@@ -1,4 +1,8 @@
 # 68_delta_ci_v2.R -- delta-method 95% CI using glmnet ridge + sandwich vcov
+#
+# 注意：本脚本是 **敏感性分析**（b 路径为 logit 尺度）。主结果的 CI 由
+#   mediation_main.R 中的 lavaan WLSMV（probit 尺度）直接给出，见该脚本说明。
+#   intercept=FALSE + 手动去掉 glmnet 伪 intercept 行，避免双重截距（历史 bug）。
 suppressPackageStartupMessages({ library(survey); library(glmnet); library(dplyr) })
 options(survey.lonely.psu = "adjust", warn = -1)
 

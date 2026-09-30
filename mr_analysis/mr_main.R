@@ -59,10 +59,20 @@ run_mr <- function(h, label) {
   if (is.null(res)) { log("  [%s] MR estimation failed", label); return(NULL) }
   v <- res@Values
   v <- v[!grepl("intercept", v$Method, ignore.case = TRUE), ]
-  data.frame(analysis = label, method = v$Method, b = v$Estimate,
+  out <- data.frame(analysis = label, method = v$Method, b = v$Estimate,
              se = v[["Std Error"]], lo = v$Estimate - 1.96*v[["Std Error"]],
              hi = v$Estimate + 1.96*v[["Std Error"]], p = v[["P-value"]],
              n_snp = nrow(h), stringsAsFactors = FALSE)
+  # 显式随机效应 IVW（论文报告的主估计；mr_allmethods 的 IVW 默认为固定效应）
+  ivw_re <- tryCatch(mr_ivw(mi, model = "random"), error = function(e) NULL)
+  if (!is.null(ivw_re)) {
+    out <- rbind(out, data.frame(analysis = label, method = "IVW (random effects)",
+                 b = ivw_re@Estimate, se = ivw_re@StdError,
+                 lo = ivw_re@Estimate - 1.96*ivw_re@StdError,
+                 hi = ivw_re@Estimate + 1.96*ivw_re@StdError,
+                 p = ivw_re@Pvalue, n_snp = nrow(h), stringsAsFactors = FALSE))
+  }
+  out
 }
 
 log("===== parse VCF =====")

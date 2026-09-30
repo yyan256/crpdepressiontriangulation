@@ -75,17 +75,22 @@ print(m[, .(snp, beta_e, se_e, beta_o, se_o)])
 if (nrow(m) < 1) { log("no harmonized IL6R instrument"); quit(save = "no", status = 0) }
 
 # --- MR estimate ---
+# 说明：Wald ratio 的 p 值用 2*pnorm(-|wr|/wr_se)（正文 §3.9 报告值，如 0.275/0.816）；
+#       而 vcf_parsed 缓存中保存的 p_outcome 是 MDD GWAS 原始 SNP-outcome 关联 p
+#       （如 0.2714/0.8213），两者口径不同。正文与 CSV 的一致性见 README 说明。
 if (nrow(m) == 1) {
   wr <- m$beta_o[1] / m$beta_e[1]
   wr_se <- abs(m$se_o[1] / m$beta_e[1])
+  wr_p <- 2*pnorm(-abs(wr/wr_se))
   cat(sprintf("Wald ratio (1 variant %s): b=%.4f se=%.4f p=%.4f\n",
-              m$snp[1], wr, wr_se, 2*pnorm(-abs(wr/wr_se))))
+              m$snp[1], wr, wr_se, wr_p))
 } else if (nrow(m) == 2) {
   wr <- m$beta_o / m$beta_e
   wr_se <- abs(m$se_o / m$beta_e)
-  cat("Wald ratio per variant:\n")
+  wr_p <- 2*pnorm(-abs(wr/wr_se))
+  cat("Wald ratio per variant (p = Wald-ratio-based, NOT raw outcome p):\n")
   print(data.table(snp = m$snp, beta_crp = m$beta_e, beta_mdd = m$beta_o,
-                   wald = wr, se = wr_se, p = 2*pnorm(-abs(wr/wr_se))))
+                   wald = wr, se = wr_se, p = wr_p))
   mi <- mr_input(bx = m$beta_e, bxse = m$se_e, by = m$beta_o, byse = m$se_o, snps = m$snp)
   ivw <- mr_ivw(mi)
   cat(sprintf("IVW (2 variants): b=%.4f se=%.4f p=%.4f\n", ivw@Estimate, ivw@StdError, ivw@Pvalue))

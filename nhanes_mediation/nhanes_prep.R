@@ -41,7 +41,7 @@ dii_ref <- data.frame(
              "carbohydrate","fiber","vit_b6","vit_b12","vit_c","vit_d","vit_e",
              "iron","magnesium","zinc","alcohol"),
   var    = c("DR1TKCAL","DR1TPROT","DR1TTFAT","DR1TSFAT","DR1TTRF","DR1TCHOL",
-             "DR1TCARB","DR1TFIBE","DR1TVB6","DR1TVB12","DR1TVC","DR1TVD","DR1TVE",
+             "DR1TCARB","DR1TFIBE","DR1TVB6","DR1TVB12","DR1TVC","DR1TVD","DR1TATOC",
              "DR1TIRON","DR1TMAGN","DR1TZINC","DR1TALCO"),
   effect = c( 0.180, 0.021, 0.298, 0.373, 0.229, 0.110,
               0.097,-0.663,-0.365, 0.106,-0.424,-0.446,-0.419,
@@ -212,10 +212,18 @@ for (i in seq_len(nrow(cycles))) {
     for (v in demo_vars) dat[[v]] <- to_num(dat[[v]])
   }
 
-  # 吸烟 SMQ020: 1=每天 2=有些天 7/9=拒绝/不知 → 二分 smoker
+  # 吸烟（当前吸烟者）—— 正确构造，修复历史编码 bug：
+  #   SMQ020 = "一生是否吸过 ≥100 支烟" (1=是, 2=否, 7/9=拒绝/不知)
+  #   SMQ040 = "现在是否吸烟" (1=每天, 2=有些天, 3=不吸烟, 7/9=拒绝/不知; 仅 SMQ020==1 者填答)
+  #   错误旧逻辑曾把 SMQ020 误当"当前吸烟频率"，导致 smoker=1 占 ~99.97%。
+  #   正确构造：SMQ020==2(从未吸过100支) → 非当前吸烟者=0；
+  #             SMQ020==1 且 SMQ040∈{1,2}(每天/有些天) → 当前吸烟者=1；
+  #             SMQ020==1 且 SMQ040==3(已戒烟) → 非当前吸烟者=0；其余 → NA。
   if (!is.null(smq) && "SMQ020" %in% names(smq)) {
-    dat <- merge(dat, smq[, c("SEQN","SMQ020")], by = "SEQN", all.x = TRUE)
-    dat$SMQ020 <- to_num(dat$SMQ020)
+    smq_cols <- intersect(c("SEQN","SMQ020","SMQ040"), names(smq))
+    dat <- merge(dat, smq[, smq_cols, drop = FALSE], by = "SEQN", all.x = TRUE)
+    if ("SMQ020" %in% names(dat)) dat$SMQ020 <- to_num(dat$SMQ020)
+    if ("SMQ040" %in% names(dat)) dat$SMQ040 <- to_num(dat$SMQ040)
   }
 
   # 饮酒：合并终生/过去12月酒精变量，跨周期一致构造 drinker（见下方派生）
@@ -284,17 +292,18 @@ df <- df %>% mutate(
   race  = factor(case_when(
     RIDRETH1 == 3 ~ "Non-Hispanic White",
     RIDRETH1 == 4 ~ "Non-Hispanic Black",
-    RIDRETH1 == 1 ~ "Mexican American",
-    RIDRETH1 == 2 ~ "Other Hispanic",
+    RIDRETH1 %in% c(1, 2) ~ "Hispanic",
     TRUE ~ "Other"
   )),
   education = factor(case_when(
-    DMDEDUC2 %in% c(1,2) ~ "<=High school",
-    DMDEDUC2 == 3 ~ "Some college",
-    DMDEDUC2 %in% c(4,5) ~ "College+",
+    DMDEDUC2 %in% c(1,2) ~ "< High school",
+    DMDEDUC2 == 3 ~ "High school graduate",
+    DMDEDUC2 %in% c(4,5) ~ "> High school",
     TRUE ~ "Other"
   )),
-  smoker = ifelse(SMQ020 %in% c(1,2), 1, ifelse(SMQ020 %in% c(3,7,9), 0, NA)),
+  smoker = ifelse(SMQ020 == 2, 0,
+           ifelse(SMQ040 %in% c(1, 2), 1,
+           ifelse(SMQ040 == 3, 0, NA))),
   # 终生是否饮酒(ever drinker)二分：跨 5 周期一致构造
   #   D/E/F/I: ALQ101==1(过去12月饮) -> 1; ALQ101==2 且 ALQ110==1(终生曾饮) -> 1; ALQ101==2 且 ALQ110==2 -> 0
   #   J      : ALQ111==1(终生曾饮) -> 1; ALQ111==2 -> 0

@@ -22,10 +22,10 @@ This repository contains the code used to reproduce all analyses reported in the
 │   └── download_gwas_vcf.R   # R variant of the VCF downloader
 ├── nhanes_mediation/         # NHANES mediation (observational arm)
 │   ├── nhanes_prep.R                # Download + build the 5-cycle analytic sample
-│   ├── fix_dii_rebuild.R            # Recompute DII (correct NA handling) → v2 sample
-│   ├── mediation_main.R             # Main mediation (glmnet ridge, survey-weighted)
-│   ├── mediation_lavaan_wlsmv.R     # lavaan WLSMV (probit) reproducibility check
-│   ├── mediation_delta_ci.R         # Delta-method 95% CIs (sandwich vcov)
+│   ├── fix_dii_rebuild.R            # Recompute DII + fix smoker/education/race coding → v2 sample
+│   ├── mediation_main.R             # MAIN: lavaan WLSMV (probit) + glmnet-ridge sensitivity
+│   ├── mediation_lavaan_wlsmv.R     # lavaan WLSMV (probit) standalone reproducibility check
+│   ├── mediation_delta_ci.R         # Delta-method 95% CIs (sandwich vcov; logit sensitivity)
 │   └── mediation_sensitivity_continuous.R  # Continuous / total-PHQ-9 / PHQ-9≥10
 └── mr_analysis/              # Two-sample MR (genetic arm)
     ├── mr_main.R                    # Forward CRP→MDD and reverse MDD→CRP
@@ -139,6 +139,16 @@ The full, per-analysis instrument tables (harmonized effect/other alleles, expos
 | `instruments_IL6R_to_MDD.csv` | IL6R cis → MDD (drug-target) | 2 |
 
 The fibre-intake GWAS (`ukb-b-19085`) contained no genome-wide significant (p < 5 × 10⁻⁸) variants, so no instrument list is provided for the fibre arm (consistent with the null fibre step reported in the manuscript). All instruments were LD-clumped at r² < 0.001 within 10 Mb using the 1000 Genomes EUR panel.
+
+---
+
+## Methodological notes (added in revision)
+
+**Mediation scale.** The primary mediation results are estimated with `lavaan` **WLSMV** (probit link for the binary outcome), so that the path-a coefficient (linear, on log-CRP) and path-b coefficient (probit) are jointly estimated on a single, well-defined scale, and the indirect effect `a×b` and its proportion `a×b/(a×b+c′)` carry delta-method confidence intervals directly from `lavaan`. The earlier "linear-coefficient × logit-coefficient" mixture is avoided. The `glmnet` ridge-logistic model is retained only as a **sensitivity** check (logit scale; `intercept = FALSE` to avoid double intercepts).
+
+**Variable coding (fixed in this revision).** The analytic sample defines *current smoker* from SMQ020 (≥100 cigarettes in lifetime) **and** SMQ040 (now smokes every day/some days): never-smoked (SMQ020 = 2) → 0; current (SMQ040 ∈ {1,2}) → 1; former (SMQ040 = 3) → 0. Education uses the correct DMDEDUC2 mapping (<High school = 1,2; High school graduate = 3; >High school = 4,5). Race is collapsed to 4 categories (Hispanic = Mexican American + Other Hispanic). Vitamin E in the DII uses `DR1TATOC` (not `DR1TVE`).
+
+**IL6R Wald-ratio p-values.** In `instruments_IL6R_to_MDD.csv`, the `p_outcome` column is the raw MDD GWAS SNP-outcome p-value; the Wald-ratio p-values reported in the manuscript (Section 3.9) are instead computed as `2·Φ(−|β/SE|)` from the Wald ratio. Both are reproducible from the CSV columns (`beta_outcome`, `se_outcome`, `beta_exposure`).
 
 ---
 
