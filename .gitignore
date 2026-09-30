@@ -13,6 +13,9 @@
 *.tsv
 *.txt
 
+# --- Exceptions: MR instrument lists are small and must be versioned ---
+!instruments/*.csv
+
 # --- R ---
 .Rhistory
 .RData

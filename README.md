@@ -32,6 +32,12 @@ This repository contains the code used to reproduce all analyses reported in the
     ├── mr_il6r_drug_target.R        # IL6R cis drug-target MR
     ├── mr_two_step_mediation.R      # Two-step MR (nutrient → CRP → MDD)
     └── mr_report_table.R            # Full STROBE-MR reporting battery (R1-9)
+instruments/                 # Complete instrument lists (versioned; see below)
+    ├── instruments_CRP_to_MDD.csv
+    ├── instruments_MDD_to_CRP.csv
+    ├── instruments_VitD_to_CRP.csv
+    ├── instruments_VitD_to_MDD.csv
+    └── instruments_IL6R_to_MDD.csv
 ```
 
 ---
@@ -117,6 +123,22 @@ Rscript mr_analysis/mr_report_table.R         # full STROBE-MR reporting table
 | CRP → MDD | 3,951 → 54 | 180.4 | 0.0008 (0.538) | 86.8 (0.0024) | correct (0.666) |
 | MDD → CRP | 4,613 → 23 | 41.5 | −0.0078 (0.179) | 42.0 (0.0062) | correct (0.021) |
 | IL6R → MDD | 117 → 2 | — (2 IVs) | — | — | — |
+
+---
+
+## Complete instrument lists
+
+The full, per-analysis instrument tables (harmonized effect/other alleles, exposure and outcome beta/SE/p, and per-SNP F-statistics) are provided as versioned CSV files in `instruments/`:
+
+| File | Analysis | Harmonized instruments |
+|---|---|---|
+| `instruments_CRP_to_MDD.csv` | CRP → MDD (forward) | 54 |
+| `instruments_MDD_to_CRP.csv` | MDD → CRP (reverse) | 23 |
+| `instruments_VitD_to_CRP.csv` | Vitamin D → CRP (two-step, step 1) | 42 |
+| `instruments_VitD_to_MDD.csv` | Vitamin D → MDD (total effect) | 94 |
+| `instruments_IL6R_to_MDD.csv` | IL6R cis → MDD (drug-target) | 2 |
+
+The fibre-intake GWAS (`ukb-b-19085`) contained no genome-wide significant (p < 5 × 10⁻⁸) variants, so no instrument list is provided for the fibre arm (consistent with the null fibre step reported in the manuscript). All instruments were LD-clumped at r² < 0.001 within 10 Mb using the 1000 Genomes EUR panel.
 
 ---
 
