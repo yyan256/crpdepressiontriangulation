@@ -23,7 +23,7 @@ This repository contains the code used to reproduce all analyses reported in the
 ├── nhanes_mediation/         # NHANES mediation (observational arm)
 │   ├── nhanes_prep.R                # Download + build the 5-cycle analytic sample
 │   ├── fix_dii_rebuild.R            # Recompute DII + fix smoker/education/race coding → v2 sample
-│   ├── mediation_main.R             # MAIN: lavaan WLSMV (probit) + glmnet-ridge sensitivity
+│   ├── mediation_main.R             # MAIN: survey svyglm (probit; strata/PSU/weights) + lavaan/glmnet sensitivity
 │   ├── mediation_lavaan_wlsmv.R     # lavaan WLSMV (probit) standalone reproducibility check
 │   ├── mediation_delta_ci.R         # Delta-method 95% CIs (sandwich vcov; logit sensitivity)
 │   └── mediation_sensitivity_continuous.R  # Continuous / total-PHQ-9 / PHQ-9≥10
@@ -111,10 +111,10 @@ Rscript mr_analysis/mr_report_table.R         # full STROBE-MR reporting table
 
 | Model | Indirect proportion |
 |---|---|
-| Somatic, without BMI | 14.1% |
-| Somatic, with BMI | 6.5% |
-| Cognitive, without BMI | 11.6% |
-| Cognitive, with BMI | 6.2% |
+| Somatic, without BMI | 15.2% |
+| Somatic, with BMI | 5.5% |
+| Cognitive, without BMI | 12.4% |
+| Cognitive, with BMI | 5.1% |
 
 **Two-sample MR**
 
@@ -144,7 +144,7 @@ The fibre-intake GWAS (`ukb-b-19085`) contained no genome-wide significant (p < 
 
 ## Methodological notes (added in revision)
 
-**Mediation scale.** The primary mediation results are estimated with `lavaan` **WLSMV** (probit link for the binary outcome), so that the path-a coefficient (linear, on log-CRP) and path-b coefficient (probit) are jointly estimated on a single, well-defined scale, and the indirect effect `a×b` and its proportion `a×b/(a×b+c′)` carry delta-method confidence intervals directly from `lavaan`. The earlier "linear-coefficient × logit-coefficient" mixture is avoided. The `glmnet` ridge-logistic model is retained only as a **sensitivity** check (logit scale; `intercept = FALSE` to avoid double intercepts).
+**Mediation scale.** The primary mediation results are estimated with the `survey` package (`svyglm`), explicitly specifying the NHANES complex-sampling design — strata (`SDMVSTRA`), PSUs (`SDMVPSU`), and survey weights — so that clustering and stratification enter the standard errors. Path a (DII→log-hs-CRP) is a Gaussian-link `svyglm` and path b / c′ (log-hs-CRP / DII → binary outcome) are probit-link `svyglm`; the indirect effect `a×b` and its proportion `a×b/(a×b+c′)` carry delta-method confidence intervals from the design-based covariance matrices. `lavaan` WLSMV (probit) and `glmnet` ridge-logistic are retained only as **sensitivity** checks.
 
 **Variable coding (fixed in this revision).** The analytic sample defines *current smoker* from SMQ020 (≥100 cigarettes in lifetime) **and** SMQ040 (now smokes every day/some days): never-smoked (SMQ020 = 2) → 0; current (SMQ040 ∈ {1,2}) → 1; former (SMQ040 = 3) → 0. Education uses the correct DMDEDUC2 mapping (<High school = 1,2; High school graduate = 3; >High school = 4,5). Race is collapsed to 4 categories (Hispanic = Mexican American + Other Hispanic). Vitamin E in the DII uses `DR1TATOC` (not `DR1TVE`).
 

@@ -1,39 +1,106 @@
-# 53_med_v2.R -- mediation on corrected 5-cycle sample (n=24019)
+# mediation_main.R -- primary mediation analysis (DII -> hs-CRP -> depressive symptom dimensions)
 #
 # =============================================================================
-# 方法学说明（回应 R1-6 "product-of-coefficients 是否在报告尺度上有效"）
+# Methodological notes (responding to R1-6 "product-of-coefficients validity on
+# the reported scale; whether strata/PSUs were incorporated")
 # -----------------------------------------------------------------------------
-# 主结果统一到 **probit 链接**：用 lavaan WLSMV + sampling weights 同时估计
-#     log_crp ~ a*DII + covs            （path a：线性，log-CRP 连续中介）
-#     outcome ~ b*log_crp + cp*DII + covs（path b / c'：probit 链接）
-#     indirect := a*b ; total := indirect + cp ; prop := indirect/total
-#   a 与 b 在同一模型内、同一数据、同一协变量集、同一 survey 权重下联合估计，
-#   链接函数与尺度明确且一致（log-CRP 为高斯尺度、结局为 probit 标准正态尺度），
-#   间接效应与占比由 delta 法（lavaan 内置）直接给出 CI —— 不再出现
-#   "线性系数 × logit 系数" 的尺度混用问题。
+# PRIMARY analysis uses the survey package so that the NHANES complex-sampling
+# design is correctly incorporated into the standard errors:
+#   path a : log_crp ~ DII + covs            (Gaussian link, svyglm)
+#   path b : outcome ~ log_crp + DII + covs  (probit link, svyglm)
+#   path c': the DII coefficient in the path-b model (direct effect)
+#   indirect := a*b ; total := indirect + c' ; prop := indirect/total
+# The design is specified explicitly as strata (SDMVSTRA), PSUs (SDMVPSU), and
+# survey weights, so clustering and stratification enter the covariance matrix.
+# The indirect effect, its proportion, and their 95% CIs are obtained by the
+# delta method from the design-based (cluster-robust) vcov matrices.
 #
-# 敏感性分析：glmnet ridge logistic（解决完全分离）。注意这里 b 路径是
-#   logit 尺度，与主结果的 probit 尺度不同，仅作为稳健性交叉验证，
-#   不用于主报告占比。
+# SENSITIVITY analyses:
+#   (i)  lavaan WLSMV (probit) with sampling.weights -- weights observations
+#        but does NOT additionally adjust for clustering; used only as a
+#        robustness cross-check.
+#   (ii) glmnet ridge logistic (logit scale; intercept=FALSE) -- a robustness
+#        check against complete separation; note the b path is on the logit
+#        scale here, so the proportion is not the primary report.
 # =============================================================================
-suppressPackageStartupMessages({ library(survey); library(glmnet); library(dplyr); library(lavaan) })
+suppressPackageStartupMessages({ library(survey); library(glmnet); library(lavaan) })
 options(survey.lonely.psu = "adjust", warn = -1)
 
 df <- readRDS("/root/autodl-tmp/nhanes/nhanes_merged_analysis_v2.rds")
 cat(sprintf("analysis nrow=%d\n", nrow(df)))
 for (v in c("race","education","cycle")) df[[v]] <- factor(df[[v]])
 
+design <- svydesign(id = ~SDMVPSU, strata = ~SDMVSTRA, weights = ~weight,
+                    data = df, nest = TRUE)
+cat(sprintf("design degf=%s  (PSU clusters=%d, strata=%d)\n",
+    format(degf(design)),
+    length(unique(interaction(df$SDMVSTRA, df$SDMVPSU))),
+    length(unique(df$SDMVSTRA))))
+
 COV_BASE <- c("RIDAGEYR","sex","race","education","smoker","drinker","cycle")
 COV_BMI  <- c(COV_BASE, "BMXBMI")
 
+# ---- delta method (multivariate; a independent of (b, c')) ----
+delta_ci <- function(a, b, cp, Va, Vb, Vc, Cov_bc) {
+  a <- as.numeric(a); b <- as.numeric(b); cp <- as.numeric(cp)
+  Va <- as.numeric(Va); Vb <- as.numeric(Vb); Vc <- as.numeric(Vc); Cov_bc <- as.numeric(Cov_bc)
+  ind <- a * b
+  tot <- ind + cp
+  prop <- ind / tot
+  Vi <- b^2*Va + a^2*Vb
+  se_i <- sqrt(max(Vi, 0))
+  ga <- b*cp / tot^2
+  gb <- a*cp / tot^2
+  gc <- -ind / tot^2
+  Vp <- ga^2*Va + gb^2*Vb + gc^2*Vc + 2*gb*gc*Cov_bc
+  se_p <- sqrt(max(Vp, 0))
+  c(ind = ind, ind_lo = ind - 1.96*se_i, ind_hi = ind + 1.96*se_i,
+    prop = prop, prop_lo = prop - 1.96*se_p, prop_hi = prop + 1.96*se_p)
+}
+
 # -----------------------------------------------------------------------------
-# 主结果：lavaan WLSMV（probit），dummy 编码无序多分类协变量
+# PRIMARY: survey svyglm (Gaussian path a + probit path b/c')
 # -----------------------------------------------------------------------------
-# dummy-encode multi-level unordered factors (WLSMV cannot take factors directly)
+run_svy <- function(outcome, covs, label) {
+  allv <- unique(c(outcome, "log_crp", "DII", covs))
+  cc <- complete.cases(df[, allv, drop = FALSE])
+  dd <- df[cc, ]
+  dsub <- svydesign(id = ~SDMVPSU, strata = ~SDMVSTRA, weights = ~weight,
+                    data = dd, nest = TRUE)
+  fm_a <- as.formula(sprintf("log_crp ~ DII + %s", paste(covs, collapse = " + ")))
+  m_a <- svyglm(fm_a, design = dsub, family = gaussian())
+  a <- coef(m_a)["DII"]; Va <- vcov(m_a)["DII", "DII"]
+  fm_b <- as.formula(sprintf("%s ~ log_crp + DII + %s", outcome, paste(covs, collapse = " + ")))
+  m_b <- svyglm(fm_b, design = dsub, family = binomial(link = "probit"))
+  b  <- coef(m_b)["log_crp"]; Vb  <- vcov(m_b)["log_crp", "log_crp"]
+  cp <- coef(m_b)["DII"];      Vc  <- vcov(m_b)["DII", "DII"]
+  Cov_bc <- vcov(m_b)["log_crp", "DII"]
+  dc <- delta_ci(a, b, cp, Va, Vb, Vc, Cov_bc)
+  cat(sprintf("  %-16s a=%.4f b=%.4f c'=%.4f  prop=%.2f%% [%.2f, %.2f]  indirect=%.5f [%.5f, %.5f]  (n=%d)\n",
+      label, a, b, cp, dc["prop"]*100, dc["prop_lo"]*100, dc["prop_hi"]*100,
+      dc["ind"], dc["ind_lo"], dc["ind_hi"], nrow(dd)))
+  data.frame(label = label, method = "svyglm_probit", n = nrow(dd),
+             a = a, a_se = sqrt(Va), b = b, b_se = sqrt(Vb), cp = cp, cp_se = sqrt(Vc),
+             indirect = dc["ind"], ind_lo = dc["ind_lo"], ind_hi = dc["ind_hi"],
+             prop = dc["prop"], prop_lo = dc["prop_lo"], prop_hi = dc["prop_hi"],
+             stringsAsFactors = FALSE)
+}
+
+cat("===== PRIMARY: survey svyglm (probit; strata/PSU/weights incorporated) =====\n")
+res_primary <- rbind(
+  run_svy("somatic_high",   COV_BASE, "somatic_noBMI"),
+  run_svy("somatic_high",   COV_BMI,  "somatic_BMI"),
+  run_svy("cognitive_high", COV_BASE, "cognitive_noBMI"),
+  run_svy("cognitive_high", COV_BMI,  "cognitive_BMI")
+)
+
+# -----------------------------------------------------------------------------
+# SENSITIVITY (i): lavaan WLSMV (probit) + sampling.weights (no clustering)
+# -----------------------------------------------------------------------------
 enc <- function(var) {
   x <- as.character(df[[var]])
   lv <- sort(unique(x[!is.na(x)]))
-  rest <- setdiff(lv, lv[1])            # first level = reference
+  rest <- setdiff(lv, lv[1])
   out <- character(0)
   for (lev in rest) {
     nm <- paste0(var, "_d", match(lev, rest))
@@ -43,95 +110,79 @@ enc <- function(var) {
   out
 }
 rc <- enc("race"); ec <- enc("education"); cc <- enc("cycle")
-# 将 covs 中的 factor 列替换为 dummy 列（sex 是 2 水平可保留，但统一转 numeric 更稳妥）
-dummy_map <- c(race = list(rc), education = list(ec), cycle = list(cc))
 replace_covs <- function(covs) {
-  out <- covs
-  for (nm in names(dummy_map)) {
-    if (nm %in% out) out <- c(setdiff(out, nm), dummy_map[[nm]])
+  for (pair in list(c("race", rc), c("education", ec), c("cycle", cc))) {
+    if (pair[1] %in% covs) covs <- c(setdiff(covs, pair[1]), pair[2])
   }
-  out
+  covs
 }
 COV_BASE_LAV <- replace_covs(COV_BASE)
 COV_BMI_LAV  <- replace_covs(COV_BMI)
 
-run_lavaan <- function(outcome, covs, label, use_w = FALSE) {
+run_lavaan <- function(outcome, covs, label) {
   covstr <- paste(covs, collapse = " + ")
   model <- sprintf(
     "log_crp ~ a*DII + %s\n%s ~ b*log_crp + cp*DII + %s\nindirect := a*b\ntotal := indirect + cp\nprop := indirect/total",
     covstr, outcome, covstr)
-  args <- list(model = model, data = df, ordered = outcome, estimator = "WLSMV")
-  # 主结果使用 NHANES 复杂抽样的 sampling weights（与 Table 1 / svyglm 一致）
-  if (use_w) args$sampling.weights <- "weight"
   fit <- tryCatch(
-    do.call(sem, args),
-    error = function(e) { cat("  ERROR:", conditionMessage(e), "\n"); NULL })
+    sem(model = model, data = df, ordered = outcome, estimator = "WLSMV",
+        sampling.weights = "weight"),
+    error = function(e) { cat("  lavaan ERROR:", conditionMessage(e), "\n"); NULL })
   if (is.null(fit)) return(invisible(NULL))
   pe <- parameterEstimates(fit)
-  a <- pe$est[pe$label == "a"];  b  <- pe$est[pe$label == "b"]
-  cp <- pe$est[pe$label == "cp"]; ind <- pe$est[pe$label == "indirect"]
-  prop <- pe$est[pe$label == "prop"]
-  ci_ind <- pe[pe$label == "indirect", c("ci.lower","ci.upper")]
+  a <- pe$est[pe$label == "a"]; b <- pe$est[pe$label == "b"]
+  cp <- pe$est[pe$label == "cp"]; prop <- pe$est[pe$label == "prop"]
   ci_prop <- pe[pe$label == "prop", c("ci.lower","ci.upper")]
-  cat(sprintf("  %-14s %s: a=%.4f b=%.4f cp=%.4f indirect=%.5f [%.5f, %.5f] prop=%.2f%% [%.2f, %.2f]\n",
-              label, if (use_w) "WLSMV+w" else "WLSMV", a, b, cp, ind,
-              ci_ind[[1]], ci_ind[[2]], prop*100, ci_prop[[1]]*100, ci_prop[[2]]*100))
-  data.frame(label=label, weighted=use_w, a=a, b=b, cp=cp, indirect=ind,
-             ind_lo=ci_ind[[1]], ind_hi=ci_ind[[2]],
-             prop=prop, prop_lo=ci_prop[[1]], prop_hi=ci_prop[[2]],
-             stringsAsFactors=FALSE)
+  cat(sprintf("  %-16s a=%.4f b=%.4f c'=%.4f  prop=%.2f%% [%.2f, %.2f]  (lavaan)\n",
+      label, a, b, cp, prop*100, ci_prop[[1]]*100, ci_prop[[2]]*100))
+  data.frame(label = label, method = "lavaan_wlsmv_w", a = a, b = b, cp = cp,
+             prop = prop, prop_lo = ci_prop[[1]], prop_hi = ci_prop[[2]],
+             stringsAsFactors = FALSE)
 }
 
-cat("===== 主结果：lavaan WLSMV (probit, sampling weights) =====\n")
-res_main <- rbind(
-  run_lavaan("somatic_high",  COV_BASE_LAV, "somatic_noBMI",  TRUE),
-  run_lavaan("somatic_high",  COV_BMI_LAV,  "somatic_BMI",    TRUE),
-  run_lavaan("cognitive_high",COV_BASE_LAV, "cognitive_noBMI", TRUE),
-  run_lavaan("cognitive_high",COV_BMI_LAV,  "cognitive_BMI",   TRUE)
-)
-cat("\n===== 稳健性：lavaan WLSMV (probit, 未加权) =====\n")
-res_main_unw <- rbind(
-  run_lavaan("somatic_high",  COV_BASE_LAV, "somatic_noBMI"),
-  run_lavaan("somatic_high",  COV_BMI_LAV,  "somatic_BMI"),
-  run_lavaan("cognitive_high",COV_BASE_LAV, "cognitive_noBMI"),
-  run_lavaan("cognitive_high",COV_BMI_LAV,  "cognitive_BMI")
+cat("\n===== SENSITIVITY (i): lavaan WLSMV + sampling weights =====\n")
+res_lavaan <- rbind(
+  run_lavaan("somatic_high",   COV_BASE_LAV, "somatic_noBMI"),
+  run_lavaan("somatic_high",   COV_BMI_LAV,  "somatic_BMI"),
+  run_lavaan("cognitive_high", COV_BASE_LAV, "cognitive_noBMI"),
+  run_lavaan("cognitive_high", COV_BMI_LAV,  "cognitive_BMI")
 )
 
 # -----------------------------------------------------------------------------
-# 敏感性：glmnet ridge logistic（logit 尺度；intercept=FALSE 避免双重截距）
+# SENSITIVITY (ii): glmnet ridge logistic (logit scale; intercept=FALSE)
 # -----------------------------------------------------------------------------
-fit_glmnet_coef <- function(outcome, mediator, exposure, covs, lambda=1e-4) {
-  ff <- as.formula(sprintf("%s ~ %s + %s + %s", outcome, mediator, exposure, paste(covs, collapse=" + ")))
-  allv <- all.vars(ff); cc <- complete.cases(df[, allv, drop=FALSE]); dd <- df[cc, ]
-  x <- model.matrix(ff, data=dd); y <- dd[[outcome]]; w <- dd$weight
-  # intercept=FALSE：model.matrix 已含 intercept 列，避免双重截距（历史 bug）
-  fit <- glmnet(x, y, family="binomial", alpha=0, lambda=lambda, weights=w, intercept=FALSE, standardize=FALSE)
-  cf <- as.numeric(coef(fit))[-1]; names(cf) <- rownames(coef(fit))[-1]  # 去掉 glmnet 伪 intercept 行
-  list(b=cf[mediator], cp=cf[exposure], n=sum(cc))
+fit_glmnet_coef <- function(outcome, mediator, exposure, covs, lambda = 1e-4) {
+  ff <- as.formula(sprintf("%s ~ %s + %s + %s", outcome, mediator, exposure, paste(covs, collapse = " + ")))
+  allv <- all.vars(ff); cc <- complete.cases(df[, allv, drop = FALSE]); dd <- df[cc, ]
+  x <- model.matrix(ff, data = dd); y <- dd[[outcome]]; w <- dd$weight
+  fit <- glmnet(x, y, family = "binomial", alpha = 0, lambda = lambda, weights = w,
+                intercept = FALSE, standardize = FALSE)
+  cf <- as.numeric(coef(fit))[-1]; names(cf) <- rownames(coef(fit))[-1]
+  list(b = cf[mediator], cp = cf[exposure], n = sum(cc))
 }
 
 run_sens <- function(outcome, covs, label) {
-  fm_med <- as.formula(sprintf("%s ~ %s + %s", "log_crp", "DII", paste(covs, collapse=" + ")))
-  m_med <- svyglm(fm_med, design=svydesign(id=~SDMVPSU, strata=~SDMVSTRA, weights=~weight, data=df, nest=TRUE), family=gaussian())
+  fm_med <- as.formula(sprintf("log_crp ~ DII + %s", paste(covs, collapse = " + ")))
+  m_med <- svyglm(fm_med, design = design, family = gaussian())
   a <- coef(m_med)["DII"]
   o <- fit_glmnet_coef(outcome, "log_crp", "DII", covs)
   b <- o$b; cp <- o$cp
-  indirect <- a*b; denom <- indirect + cp
-  prop <- if (abs(denom)>1e-9) indirect/denom else NA
-  cat(sprintf("  %-14s (logit敏感): a=%.4f b=%.4f c'=%.4f indirect=%.5f prop=%.2f%% (n=%d)\n",
-              label, a, b, cp, indirect, prop*100, o$n))
-  data.frame(label=paste0(label,"_sens"), a=a, b=b, cp=cp, indirect=indirect, prop=prop, n=o$n, stringsAsFactors=FALSE)
+  indirect <- a * b; denom <- indirect + cp
+  prop <- if (abs(denom) > 1e-9) indirect / denom else NA
+  cat(sprintf("  %-16s a=%.4f b=%.4f c'=%.4f  prop=%.2f%%  (logit sensitivity, n=%d)\n",
+      label, a, b, cp, prop*100, o$n))
+  data.frame(label = label, method = "glmnet_logit", a = a, b = b, cp = cp,
+             indirect = indirect, prop = prop, n = o$n, stringsAsFactors = FALSE)
 }
 
-cat("\n===== 敏感性：glmnet ridge (logit 尺度，仅交叉验证) =====\n")
+cat("\n===== SENSITIVITY (ii): glmnet ridge logistic (logit scale) =====\n")
 res_sens <- rbind(
-  run_sens("somatic_high",  COV_BASE, "somatic_noBMI"),
-  run_sens("somatic_high",  COV_BMI,  "somatic_BMI"),
-  run_sens("cognitive_high",COV_BASE, "cognitive_noBMI"),
-  run_sens("cognitive_high",COV_BMI,  "cognitive_BMI")
+  run_sens("somatic_high",   COV_BASE, "somatic_noBMI"),
+  run_sens("somatic_high",   COV_BMI,  "somatic_BMI"),
+  run_sens("cognitive_high", COV_BASE, "cognitive_noBMI"),
+  run_sens("cognitive_high", COV_BMI,  "cognitive_BMI")
 )
 
-cat("\n=== 对照论文 ===\n")
-cat("  论文 somatic: noBMI 13.6% / BMI 6.0%\n")
-cat("  论文 cognitive: 1.2% (CI -0.8~3.5)\n")
-cat("DONE\n")
+dir.create("/root/autodl-tmp/results", showWarnings = FALSE)
+write.csv(res_primary, "/root/autodl-tmp/results/mediation_primary_svyglm_probit.csv", row.names = FALSE)
+cat("\nDONE\n")
