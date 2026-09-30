@@ -3,14 +3,14 @@
 # =============================================================================
 # 方法学说明（回应 R1-6 "product-of-coefficients 是否在报告尺度上有效"）
 # -----------------------------------------------------------------------------
-# 主结果统一到 **probit 链接**：用 lavaan WLSMV 同时估计
+# 主结果统一到 **probit 链接**：用 lavaan WLSMV + sampling weights 同时估计
 #     log_crp ~ a*DII + covs            （path a：线性，log-CRP 连续中介）
 #     outcome ~ b*log_crp + cp*DII + covs（path b / c'：probit 链接）
 #     indirect := a*b ; total := indirect + cp ; prop := indirect/total
-#   a 与 b 在同一模型内、同一数据、同一协变量集下联合估计，链接函数与尺度
-#   明确且一致（log-CRP 为高斯尺度、结局为 probit 标准正态尺度），间接效应
-#   与占比由 delta 法（lavaan 内置）直接给出 CI —— 不再出现"线性系数×logit
-#   系数"的尺度混用问题。
+#   a 与 b 在同一模型内、同一数据、同一协变量集、同一 survey 权重下联合估计，
+#   链接函数与尺度明确且一致（log-CRP 为高斯尺度、结局为 probit 标准正态尺度），
+#   间接效应与占比由 delta 法（lavaan 内置）直接给出 CI —— 不再出现
+#   "线性系数 × logit 系数" 的尺度混用问题。
 #
 # 敏感性分析：glmnet ridge logistic（解决完全分离）。注意这里 b 路径是
 #   logit 尺度，与主结果的 probit 尺度不同，仅作为稳健性交叉验证，
@@ -55,13 +55,16 @@ replace_covs <- function(covs) {
 COV_BASE_LAV <- replace_covs(COV_BASE)
 COV_BMI_LAV  <- replace_covs(COV_BMI)
 
-run_lavaan <- function(outcome, covs, label) {
+run_lavaan <- function(outcome, covs, label, use_w = FALSE) {
   covstr <- paste(covs, collapse = " + ")
   model <- sprintf(
     "log_crp ~ a*DII + %s\n%s ~ b*log_crp + cp*DII + %s\nindirect := a*b\ntotal := indirect + cp\nprop := indirect/total",
     covstr, outcome, covstr)
+  args <- list(model = model, data = df, ordered = outcome, estimator = "WLSMV")
+  # 主结果使用 NHANES 复杂抽样的 sampling weights（与 Table 1 / svyglm 一致）
+  if (use_w) args$sampling.weights <- "weight"
   fit <- tryCatch(
-    sem(model, data = df, ordered = outcome, estimator = "WLSMV"),
+    do.call(sem, args),
     error = function(e) { cat("  ERROR:", conditionMessage(e), "\n"); NULL })
   if (is.null(fit)) return(invisible(NULL))
   pe <- parameterEstimates(fit)
@@ -70,17 +73,24 @@ run_lavaan <- function(outcome, covs, label) {
   prop <- pe$est[pe$label == "prop"]
   ci_ind <- pe[pe$label == "indirect", c("ci.lower","ci.upper")]
   ci_prop <- pe[pe$label == "prop", c("ci.lower","ci.upper")]
-  cat(sprintf("  %-14s: a=%.4f b=%.4f cp=%.4f indirect=%.5f [%.5f, %.5f] prop=%.2f%% [%.2f, %.2f]\n",
-              label, a, b, cp, ind, ci_ind[[1]], ci_ind[[2]],
-              prop*100, ci_prop[[1]]*100, ci_prop[[2]]*100))
-  data.frame(label=label, a=a, b=b, cp=cp, indirect=ind,
+  cat(sprintf("  %-14s %s: a=%.4f b=%.4f cp=%.4f indirect=%.5f [%.5f, %.5f] prop=%.2f%% [%.2f, %.2f]\n",
+              label, if (use_w) "WLSMV+w" else "WLSMV", a, b, cp, ind,
+              ci_ind[[1]], ci_ind[[2]], prop*100, ci_prop[[1]]*100, ci_prop[[2]]*100))
+  data.frame(label=label, weighted=use_w, a=a, b=b, cp=cp, indirect=ind,
              ind_lo=ci_ind[[1]], ind_hi=ci_ind[[2]],
              prop=prop, prop_lo=ci_prop[[1]], prop_hi=ci_prop[[2]],
              stringsAsFactors=FALSE)
 }
 
-cat("===== 主结果：lavaan WLSMV (probit) =====\n")
+cat("===== 主结果：lavaan WLSMV (probit, sampling weights) =====\n")
 res_main <- rbind(
+  run_lavaan("somatic_high",  COV_BASE_LAV, "somatic_noBMI",  TRUE),
+  run_lavaan("somatic_high",  COV_BMI_LAV,  "somatic_BMI",    TRUE),
+  run_lavaan("cognitive_high",COV_BASE_LAV, "cognitive_noBMI", TRUE),
+  run_lavaan("cognitive_high",COV_BMI_LAV,  "cognitive_BMI",   TRUE)
+)
+cat("\n===== 稳健性：lavaan WLSMV (probit, 未加权) =====\n")
+res_main_unw <- rbind(
   run_lavaan("somatic_high",  COV_BASE_LAV, "somatic_noBMI"),
   run_lavaan("somatic_high",  COV_BMI_LAV,  "somatic_BMI"),
   run_lavaan("cognitive_high",COV_BASE_LAV, "cognitive_noBMI"),
